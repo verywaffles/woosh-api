@@ -103,4 +103,17 @@ db.exec(`
   );
 );
 
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS wooshie_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    wooshie_id INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (wooshie_id) REFERENCES wooshies(id)
+  );
+`);
+
 module.exports = db;
