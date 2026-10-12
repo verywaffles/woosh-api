@@ -81,4 +81,26 @@ if (!wooshColumns.some((column) => column.name === "rewooshed_from_id")) {
   );
 }
 
+
+// Wooshies: short-form video posts and likes.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS wooshies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    video_url TEXT NOT NULL,
+    caption TEXT NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS wooshie_likes (
+    user_id INTEGER NOT NULL,
+    wooshie_id INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, wooshie_id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (wooshie_id) REFERENCES wooshies(id)
+  );
+);
+
 module.exports = db;
