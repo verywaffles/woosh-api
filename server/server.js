@@ -668,7 +668,6 @@ app.delete("/api/wooshes/:id", authenticateToken, (req, res) => {
       db.prepare("DELETE FROM likes WHERE woosh_id = ?").run(wooshId);
       db.prepare("DELETE FROM comments WHERE woosh_id = ?").run(wooshId);
       db.prepare("DELETE FROM rewooshes WHERE woosh_id = ?").run(wooshId);
-      db.prepare("DELETE FROM rewooshes WHERE rewooshed_from_id = ?").run(wooshId);
       db.prepare("DELETE FROM wooshes WHERE id = ?").run(wooshId);
     });
     deleteWoosh();
