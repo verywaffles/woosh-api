@@ -1,4 +1,5 @@
 const express = require("express");
+const path = require("path");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -23,6 +24,7 @@ app.use(
 );
 
 app.use(express.json({ limit: "15mb" }));
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // ============================================================
 // AUTHENTICATION
@@ -2101,6 +2103,9 @@ app.delete(
     }
   }
 );
+// WOOSHIES API ROUTES
+app.use("/api/wooshies", require("./wooshies")(db, authenticateToken));
+
 // ============================================================
 // START SERVER
 // ============================================================
