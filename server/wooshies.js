@@ -21,6 +21,26 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
     limits: { fileSize: 100 * 1024 * 1024, files: 1 },
     fileFilter: (_req, file, cb) => cb(null, allowedTypes.has(file.mimetype)),
   });
+
+  // Enforce the duration server-side; never trust client-supplied metadata.
+  const readVideoDuration = (filePath) => new Promise((resolve, reject) => {
+    const { spawn } = require("child_process");
+    const probe = spawn("ffprobe", [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      filePath,
+    ], { stdio: ["ignore", "pipe", "ignore"] });
+    let output = "";
+    probe.stdout.setEncoding("utf8");
+    probe.stdout.on("data", (chunk) => { output += chunk; });
+    probe.on("error", reject);
+    probe.on("close", (code) => {
+      const duration = Number(output.trim());
+      if (code !== 0 || !Number.isFinite(duration) || duration <= 0) reject(new Error("Could not read duration."));
+      else resolve(duration);
+    });
+  });
   const mapComment = (row) => ({ id: row.id, username: row.username, displayName: row.display_name, text: row.text, createdAt: row.created_at });
   const getComments = (id) => db.prepare(`
     SELECT c.id, c.text, c.created_at, u.username, u.display_name
@@ -53,9 +73,20 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
   });
 
   router.post("/", authenticateToken, (req, res) => {
-    upload.single("video")(req, res, (error) => {
+    upload.single("video")(req, res, async (error) => {
       if (error) return res.status(400).json({ error: error.code === "LIMIT_FILE_SIZE" ? "Video must be 100 MB or smaller." : "Could not upload that video." });
       if (!req.file) return res.status(400).json({ error: "Choose a supported video file (MP4, WebM, MOV, or OGG)." });
+      let duration;
+      try {
+        duration = await readVideoDuration(req.file.path);
+      } catch {
+        fs.unlink(req.file.path, () => {});
+        return res.status(400).json({ error: "Could not read this video's duration. Try exporting it as MP4, WebM, MOV, or OGG." });
+      }
+      if (duration > 5) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(400).json({ error: "Wooshies must be 5 seconds or shorter." });
+      }
       const caption = typeof req.body.caption === "string" ? req.body.caption.trim() : "";
       if (caption.length > 500) {
         fs.unlink(req.file.path, () => {});
@@ -76,6 +107,34 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
         res.status(500).json({ error: "Could not publish Wooshie." });
       }
     });
+  });
+
+  router.delete("/:id", authenticateToken, (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: "Invalid Wooshie ID." });
+    try {
+      const wooshie = db.prepare("SELECT id, user_id, video_url FROM wooshies WHERE id = ?").get(id);
+      if (!wooshie) return res.status(404).json({ error: "Wooshie not found." });
+      if (wooshie.user_id !== req.user.userId) return res.status(403).json({ error: "You can only delete your own Wooshies." });
+      db.transaction(() => {
+        db.prepare("DELETE FROM wooshie_comments WHERE wooshie_id = ?").run(id);
+        db.prepare("DELETE FROM wooshie_likes WHERE wooshie_id = ?").run(id);
+        db.prepare("DELETE FROM wooshies WHERE id = ?").run(id);
+      })();
+      const prefix = "/uploads/wooshies/";
+      if (typeof wooshie.video_url === "string" && wooshie.video_url.startsWith(prefix)) {
+        const filename = path.basename(wooshie.video_url);
+        if (filename === wooshie.video_url.slice(prefix.length)) {
+          fs.unlink(path.join(uploadDir, filename), (error) => {
+            if (error && error.code !== "ENOENT") console.error("Could not remove deleted Wooshie video:", error);
+          });
+        }
+      }
+      return res.json({ message: "Wooshie deleted.", id });
+    } catch (error) {
+      console.error("Delete Wooshie error:", error);
+      return res.status(500).json({ error: "Could not delete Wooshie." });
+    }
   });
 
   router.post("/:id/like", authenticateToken, (req, res) => {

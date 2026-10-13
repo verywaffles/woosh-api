@@ -643,6 +643,41 @@ app.post("/api/wooshes", authenticateToken, (req, res) => {
   }
 });
 
+// Delete a Woosh owned by the authenticated user.
+app.delete("/api/wooshes/:id", authenticateToken, (req, res) => {
+  const wooshId = Number(req.params.id);
+  if (!Number.isInteger(wooshId) || wooshId < 1) {
+    return res.status(400).json({ error: "Invalid Woosh ID." });
+  }
+
+  try {
+    const woosh = db.prepare("SELECT id, user_id FROM wooshes WHERE id = ?").get(wooshId);
+    if (!woosh) return res.status(404).json({ error: "Woosh not found." });
+    if (woosh.user_id !== req.user.userId) {
+      return res.status(403).json({ error: "You can only delete your own Wooshes." });
+    }
+
+    const deleteWoosh = db.transaction(() => {
+      const reposts = db.prepare("SELECT id FROM wooshes WHERE rewooshed_from_id = ?").all(wooshId);
+      for (const repost of reposts) {
+        db.prepare("DELETE FROM likes WHERE woosh_id = ?").run(repost.id);
+        db.prepare("DELETE FROM comments WHERE woosh_id = ?").run(repost.id);
+        db.prepare("DELETE FROM rewooshes WHERE woosh_id = ?").run(repost.id);
+      }
+      db.prepare("DELETE FROM wooshes WHERE rewooshed_from_id = ?").run(wooshId);
+      db.prepare("DELETE FROM likes WHERE woosh_id = ?").run(wooshId);
+      db.prepare("DELETE FROM comments WHERE woosh_id = ?").run(wooshId);
+      db.prepare("DELETE FROM rewooshes WHERE woosh_id = ?").run(wooshId);
+      db.prepare("DELETE FROM wooshes WHERE id = ?").run(wooshId);
+    });
+    deleteWoosh();
+    return res.json({ message: "Woosh deleted.", id: wooshId });
+  } catch (error) {
+    console.error("Delete Woosh error:", error);
+    return res.status(500).json({ error: "Could not delete Woosh." });
+  }
+});
+
 // ============================================================
 // LIKE / UNLIKE
 // ============================================================
