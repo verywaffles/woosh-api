@@ -8,7 +8,9 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
   const router = express.Router();
   const uploadDir = path.join(__dirname, "uploads", "wooshies");
   fs.mkdirSync(uploadDir, { recursive: true });
-  const allowedTypes = new Set(["video/mp4", "video/webm", "video/quicktime", "video/ogg"]);
+  // Accept common browser video MIME types and Apple video extensions. FFmpeg validates the actual file.
+  const allowedExtensions = new Set([".mp4", ".m4v", ".mov", ".webm", ".ogg", ".ogv", ".3gp", ".3gpp", ".avi", ".mkv"]);
+  const allowedTypes = new Set(["video/mp4", "video/webm", "video/quicktime", "video/ogg", "video/x-m4v", "video/3gpp", "video/x-msvideo", "video/x-matroska", "application/octet-stream"]);
   const storage = multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, uploadDir),
     filename: (_req, file, cb) => {
@@ -19,26 +21,39 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
   const upload = multer({
     storage,
     limits: { fileSize: 100 * 1024 * 1024, files: 1 },
-    fileFilter: (_req, file, cb) => cb(null, allowedTypes.has(file.mimetype)),
+    fileFilter: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, allowedTypes.has(file.mimetype) || allowedExtensions.has(ext));
+    },
   });
 
-  // Enforce the duration server-side; never trust client-supplied metadata.
-  const readVideoDuration = (filePath) => new Promise((resolve, reject) => {
+  // Normalize every accepted upload to browser-friendly H.264/AAC MP4 and keep only its first 5 seconds.
+  // This also handles common iPhone/iPad MOV files and HEVC input when the installed FFmpeg supports it.
+  const transcodeVideo = (inputPath, outputPath) => new Promise((resolve, reject) => {
     const { spawn } = require("child_process");
-    const probe = spawn("ffprobe", [
-      "-v", "error",
-      "-show_entries", "format=duration",
-      "-of", "default=noprint_wrappers=1:nokey=1",
-      filePath,
-    ], { stdio: ["ignore", "pipe", "ignore"] });
-    let output = "";
-    probe.stdout.setEncoding("utf8");
-    probe.stdout.on("data", (chunk) => { output += chunk; });
-    probe.on("error", reject);
-    probe.on("close", (code) => {
-      const duration = Number(output.trim());
-      if (code !== 0 || !Number.isFinite(duration) || duration <= 0) reject(new Error("Could not read duration."));
-      else resolve(duration);
+    const ffmpeg = spawn("ffmpeg", [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-i", inputPath,
+      "-t", "5",
+      "-map", "0:v:0",
+      "-map", "0:a?",
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-crf", "23",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-b:a", "128k",
+      "-movflags", "+faststart",
+      "-f", "mp4",
+      outputPath,
+    ], { stdio: ["ignore", "ignore", "pipe"] });
+    let errorOutput = "";
+    ffmpeg.stderr.setEncoding("utf8");
+    ffmpeg.stderr.on("data", (chunk) => { errorOutput += chunk; });
+    ffmpeg.on("error", reject);
+    ffmpeg.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(errorOutput.trim() || "FFmpeg could not convert the uploaded video."));
     });
   });
   const mapComment = (row) => ({ id: row.id, username: row.username, displayName: row.display_name, text: row.text, createdAt: row.created_at });
@@ -76,16 +91,16 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
     upload.single("video")(req, res, async (error) => {
       if (error) return res.status(400).json({ error: error.code === "LIMIT_FILE_SIZE" ? "Video must be 100 MB or smaller." : "Could not upload that video." });
       if (!req.file) return res.status(400).json({ error: "Choose a supported video file (MP4, WebM, MOV, or OGG)." });
-      let duration;
+      const outputFilename = crypto.randomUUID() + ".mp4";
+      const outputPath = path.join(uploadDir, outputFilename);
       try {
-        duration = await readVideoDuration(req.file.path);
-      } catch {
+        await transcodeVideo(req.file.path, outputPath);
         fs.unlink(req.file.path, () => {});
-        return res.status(400).json({ error: "Could not read this video's duration. Try exporting it as MP4, WebM, MOV, or OGG." });
-      }
-      if (duration > 5) {
+      } catch (conversionError) {
         fs.unlink(req.file.path, () => {});
-        return res.status(400).json({ error: "Wooshies must be 5 seconds or shorter." });
+        fs.unlink(outputPath, () => {});
+        console.error("Wooshie video conversion error:", conversionError.message);
+        return res.status(400).json({ error: "Couldn't process this video. Try an iPhone MOV or MP4 video." });
       }
       const caption = typeof req.body.caption === "string" ? req.body.caption.trim() : "";
       if (caption.length > 500) {
@@ -93,7 +108,7 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
         return res.status(400).json({ error: "Caption must be 500 characters or less." });
       }
       try {
-        const videoUrl = "/uploads/wooshies/" + req.file.filename;
+        const videoUrl = "/uploads/wooshies/" + outputFilename;
         const result = db.prepare("INSERT INTO wooshies (user_id, video_url, caption) VALUES (?, ?, ?)").run(req.user.userId, videoUrl, caption);
         const row = db.prepare(`
           SELECT w.id, w.user_id, w.video_url, w.caption, w.created_at,
@@ -102,7 +117,7 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
         `).get(Number(result.lastInsertRowid));
         res.status(201).json({ wooshie: mapWooshie(row) });
       } catch (dbError) {
-        fs.unlink(req.file.path, () => {});
+        fs.unlink(outputPath, () => {});
         console.error("Create Wooshie error:", dbError);
         res.status(500).json({ error: "Could not publish Wooshie." });
       }
