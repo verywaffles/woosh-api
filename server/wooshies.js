@@ -78,6 +78,34 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
     });
   });
 
+  router.delete("/:id", authenticateToken, (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: "Invalid Wooshie ID." });
+    try {
+      const wooshie = db.prepare("SELECT id, user_id, video_url FROM wooshies WHERE id = ?").get(id);
+      if (!wooshie) return res.status(404).json({ error: "Wooshie not found." });
+      if (wooshie.user_id !== req.user.userId) return res.status(403).json({ error: "You can only delete your own Wooshies." });
+      db.transaction(() => {
+        db.prepare("DELETE FROM wooshie_comments WHERE wooshie_id = ?").run(id);
+        db.prepare("DELETE FROM wooshie_likes WHERE wooshie_id = ?").run(id);
+        db.prepare("DELETE FROM wooshies WHERE id = ?").run(id);
+      })();
+      const prefix = "/uploads/wooshies/";
+      if (typeof wooshie.video_url === "string" && wooshie.video_url.startsWith(prefix)) {
+        const filename = path.basename(wooshie.video_url);
+        if (filename === wooshie.video_url.slice(prefix.length)) {
+          fs.unlink(path.join(uploadDir, filename), (error) => {
+            if (error && error.code !== "ENOENT") console.error("Could not remove deleted Wooshie video:", error);
+          });
+        }
+      }
+      return res.json({ message: "Wooshie deleted.", id });
+    } catch (error) {
+      console.error("Delete Wooshie error:", error);
+      return res.status(500).json({ error: "Could not delete Wooshie." });
+    }
+  });
+
   router.post("/:id/like", authenticateToken, (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: "Invalid Wooshie ID." });
