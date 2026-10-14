@@ -91,21 +91,26 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
     upload.single("video")(req, res, async (error) => {
       if (error) return res.status(400).json({ error: error.code === "LIMIT_FILE_SIZE" ? "Video must be 100 MB or smaller." : "Could not upload that video." });
       if (!req.file) return res.status(400).json({ error: "Choose a supported video file (MP4, WebM, MOV, or OGG)." });
+      const caption = typeof req.body.caption === "string" ? req.body.caption.trim() : "";
+      if (caption.length > 500) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(400).json({ error: "Caption must be 500 characters or less." });
+      }
+
       const outputFilename = crypto.randomUUID() + ".mp4";
       const outputPath = path.join(uploadDir, outputFilename);
       try {
         await transcodeVideo(req.file.path, outputPath);
+        const outputStats = fs.statSync(outputPath);
+        if (!outputStats.isFile() || outputStats.size === 0) {
+          throw new Error("FFmpeg produced an empty video.");
+        }
         fs.unlink(req.file.path, () => {});
       } catch (conversionError) {
         fs.unlink(req.file.path, () => {});
         fs.unlink(outputPath, () => {});
         console.error("Wooshie video conversion error:", conversionError.message);
         return res.status(400).json({ error: "Couldn't process this video. Try an iPhone MOV or MP4 video." });
-      }
-      const caption = typeof req.body.caption === "string" ? req.body.caption.trim() : "";
-      if (caption.length > 500) {
-        fs.unlink(req.file.path, () => {});
-        return res.status(400).json({ error: "Caption must be 500 characters or less." });
       }
       try {
         const videoUrl = "/uploads/wooshies/" + outputFilename;
