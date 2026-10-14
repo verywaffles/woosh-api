@@ -8,6 +8,18 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
   const router = express.Router();
   const uploadDir = path.join(__dirname, "uploads", "wooshies");
   fs.mkdirSync(uploadDir, { recursive: true });
+
+  // Safe, additive migration: existing Wooshies and accounts are preserved.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS wooshie_views (
+      user_id INTEGER NOT NULL,
+      wooshie_id INTEGER NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, wooshie_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (wooshie_id) REFERENCES wooshies(id) ON DELETE CASCADE
+    );
+  `);
   // Accept common browser video MIME types and Apple video extensions. FFmpeg validates the actual file.
   const allowedExtensions = new Set([".mp4", ".m4v", ".mov", ".webm", ".ogg", ".ogv", ".3gp", ".3gpp", ".avi", ".mkv"]);
   const allowedTypes = new Set(["video/mp4", "video/webm", "video/quicktime", "video/ogg", "video/x-m4v", "video/3gpp", "video/x-msvideo", "video/x-matroska", "application/octet-stream"]);
@@ -66,7 +78,7 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
     id: row.id, userId: row.user_id, username: row.username, displayName: row.display_name,
     profilePicture: row.profile_picture || null, videoUrl: row.video_url, caption: row.caption || "",
     createdAt: row.created_at, likeCount: row.like_count || 0, likedByMe: Boolean(row.liked_by_me),
-    commentCount: row.comment_count || 0, comments: getComments(row.id),
+    commentCount: row.comment_count || 0, viewCount: row.view_count || 0, comments: getComments(row.id),
   });
 
   router.get("/", (req, res) => {
@@ -112,7 +124,7 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
         const result = db.prepare("INSERT INTO wooshies (user_id, video_url, caption) VALUES (?, ?, ?)").run(req.user.userId, videoUrl, caption);
         const row = db.prepare(`
           SELECT w.id, w.user_id, w.video_url, w.caption, w.created_at,
-            u.username, u.display_name, u.profile_picture, 0 AS like_count, 0 AS liked_by_me, 0 AS comment_count
+            u.username, u.display_name, u.profile_picture, 0 AS like_count, 0 AS liked_by_me, 0 AS comment_count, 0 AS view_count
           FROM wooshies w JOIN users u ON u.id = w.user_id WHERE w.id = ?
         `).get(Number(result.lastInsertRowid));
         res.status(201).json({ wooshie: mapWooshie(row) });
@@ -149,6 +161,22 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
     } catch (error) {
       console.error("Delete Wooshie error:", error);
       return res.status(500).json({ error: "Could not delete Wooshie." });
+    }
+  });
+
+
+  // Count at most one view per signed-in viewer per Wooshie.
+  router.post("/:id/view", authenticateToken, (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: "Invalid Wooshie ID." });
+    try {
+      if (!db.prepare("SELECT id FROM wooshies WHERE id = ?").get(id)) return res.status(404).json({ error: "Wooshie not found." });
+      db.prepare("INSERT OR IGNORE INTO wooshie_views (user_id, wooshie_id) VALUES (?, ?)").run(req.user.userId, id);
+      const viewCount = db.prepare("SELECT COUNT(*) AS count FROM wooshie_views WHERE wooshie_id = ?").get(id).count;
+      return res.json({ viewCount });
+    } catch (error) {
+      console.error("Record Wooshie view error:", error);
+      return res.status(500).json({ error: "Could not record view." });
     }
   });
 
