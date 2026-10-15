@@ -46,7 +46,7 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
     const ffmpeg = spawn("ffmpeg", [
       "-hide_banner", "-loglevel", "error", "-y",
       "-i", inputPath,
-      "-t", "5",
+      "-t", "15",
       "-map", "0:v:0",
       "-map", "0:a?",
       "-c:v", "libx264",
