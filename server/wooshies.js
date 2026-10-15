@@ -39,7 +39,7 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
     },
   });
 
-  // Normalize every accepted upload to browser-friendly H.264/AAC MP4 and keep only its first 5 seconds.
+  // Normalize every accepted upload to browser-friendly H.264/AAC MP4 and keep only its first 15 seconds.
   // This also handles common iPhone/iPad MOV files and HEVC input when the installed FFmpeg supports it.
   const transcodeVideo = (inputPath, outputPath) => new Promise((resolve, reject) => {
     const { spawn } = require("child_process");
