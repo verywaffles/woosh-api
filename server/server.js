@@ -2138,6 +2138,9 @@ app.delete(
     }
   }
 );
+// Messaging privacy, account blocking, and server channels.
+app.use("/api", require("./messaging")(db, authenticateToken));
+
 // WOOSHIES API ROUTES
 app.use("/api/wooshies", require("./wooshies")(db, authenticateToken));
 app.use("/api/blabbers", require("./blabbers")(db, authenticateToken));
