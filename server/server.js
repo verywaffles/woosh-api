@@ -557,6 +557,15 @@ function getWooshById(wooshId) {
   };
 }
 
+// Blocks apply in both directions to prevent unwanted contact.
+function usersHaveBlockedEachOther(userA, userB) {
+  return Boolean(db.prepare(`
+    SELECT 1 FROM user_blocks
+    WHERE (blocker_id = ? AND blocked_id = ?)
+       OR (blocker_id = ? AND blocked_id = ?)
+  `).get(userA, userB, userB, userA));
+}
+
 // ============================================================
 // FEED
 // ============================================================
@@ -986,7 +995,10 @@ app.get(
           req.user.userId
         );
 
-      const result = conversations.map((conversation) => {
+      const result = conversations.filter((conversation) => {
+        const otherId = conversation.user1_id === req.user.userId ? conversation.user2_id : conversation.user1_id;
+        return !usersHaveBlockedEachOther(req.user.userId, otherId);
+      }).map((conversation) => {
         const lastMessage = db
           .prepare(`
             SELECT
@@ -1077,6 +1089,10 @@ app.post(
         });
       }
 
+      if (usersHaveBlockedEachOther(req.user.userId, otherUser.id)) {
+        return res.status(403).json({ error: "Messaging is unavailable because one of these accounts has blocked the other." });
+      }
+
       const user1Id = Math.min(
         req.user.userId,
         otherUser.id
@@ -1163,6 +1179,12 @@ app.get(
         return res.status(404).json({
           error: "Conversation not found.",
         });
+      }
+
+      const participants = db.prepare("SELECT user1_id, user2_id FROM conversations WHERE id = ?").get(conversationId);
+      const otherUserId = participants.user1_id === req.user.userId ? participants.user2_id : participants.user1_id;
+      if (usersHaveBlockedEachOther(req.user.userId, otherUserId)) {
+        return res.status(403).json({ error: "Messages are unavailable because one of these accounts has blocked the other." });
       }
 
       const messages = db
@@ -1256,6 +1278,12 @@ app.post(
         return res.status(404).json({
           error: "Conversation not found.",
         });
+      }
+
+      const participants = db.prepare("SELECT user1_id, user2_id FROM conversations WHERE id = ?").get(conversationId);
+      const otherUserId = participants.user1_id === req.user.userId ? participants.user2_id : participants.user1_id;
+      if (usersHaveBlockedEachOther(req.user.userId, otherUserId)) {
+        return res.status(403).json({ error: "You cannot send messages because one of these accounts has blocked the other." });
       }
 
       const result = db
