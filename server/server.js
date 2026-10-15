@@ -156,27 +156,44 @@ app.post("/api/auth/register", async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 12);
 
-    const result = db
-      .prepare(`
-        INSERT INTO users
-        (
-          username,
-          display_name,
-          password_hash,
-          bio,
-          profile_picture
-        )
-        VALUES (?, ?, ?, '', NULL)
-      `)
-      .run(
-        cleanUsername,
-        cleanDisplayName,
-        passwordHash
-      );
+    // Create the account and join the default community server atomically.
+    // Registration fails cleanly if the configured default server is missing.
+    const createAccount = db.transaction(() => {
+      const result = db
+        .prepare(`
+          INSERT INTO users
+          (
+            username,
+            display_name,
+            password_hash,
+            bio,
+            profile_picture
+          )
+          VALUES (?, ?, ?, '', NULL)
+        `)
+        .run(cleanUsername, cleanDisplayName, passwordHash);
+
+      const userId = Number(result.lastInsertRowid);
+      const defaultServer = db
+        .prepare("SELECT id FROM servers WHERE invite_code = ?")
+        .get("EsUag76idfSx");
+
+      if (!defaultServer) {
+        throw new Error("Default Woosh server invite code EsUag76idfSx was not found.");
+      }
+
+      db.prepare(
+        "INSERT OR IGNORE INTO server_members (server_id, user_id, role) VALUES (?, ?, 'member')"
+      ).run(defaultServer.id, userId);
+
+      return { userId };
+    });
+
+    const { userId } = createAccount();
 
     const token = jwt.sign(
       {
-        userId: Number(result.lastInsertRowid),
+        userId,
         username: cleanUsername,
       },
       JWT_SECRET,
@@ -189,7 +206,7 @@ app.post("/api/auth/register", async (req, res) => {
       message: "Account created.",
       token,
       user: {
-        id: Number(result.lastInsertRowid),
+        id: userId,
         username: cleanUsername,
         displayName: cleanDisplayName,
         bio: "",
