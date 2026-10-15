@@ -2140,6 +2140,7 @@ app.delete(
 );
 // WOOSHIES API ROUTES
 app.use("/api/wooshies", require("./wooshies")(db, authenticateToken));
+app.use("/api/blabbers", require("./blabbers")(db, authenticateToken));
 
 // ============================================================
 // START SERVER
