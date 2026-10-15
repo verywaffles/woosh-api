@@ -62,6 +62,22 @@ module.exports = function messagingRoutes(db, authenticateToken) {
       ON server_members(user_id, server_id);
   `);
 
+  // Backfill existing accounts into the default community server on startup.
+  // INSERT OR IGNORE preserves existing memberships and roles.
+  const defaultServer = db
+    .prepare("SELECT id FROM servers WHERE invite_code = ?")
+    .get("EsUag76idfSx");
+
+  if (defaultServer) {
+    db.prepare(`
+      INSERT OR IGNORE INTO server_members (server_id, user_id, role)
+      SELECT ?, id, 'member' FROM users
+    `).run(defaultServer.id);
+    console.log("Existing users synced to the default Woosh server.");
+  } else {
+    console.warn("Default Woosh server invite code EsUag76idfSx was not found; existing users were not synced.");
+  }
+
   const cleanName = (value, max = 60) =>
     typeof value === "string" ? value.trim().slice(0, max) : "";
 
