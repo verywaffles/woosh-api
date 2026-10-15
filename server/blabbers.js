@@ -125,8 +125,7 @@ module.exports = function createBlabbersRouter(db, authenticateToken) {
     const room = roomById(id);
     if (!room) return res.status(404).json({ error: "Blabber not found." });
     if (!visibleTo(room, req.user.userId)) return res.status(403).json({ error: "This private Blabber requires an invitation." });
-    if (room.visibility === "private" && !room.owner_id === req.user.userId) return res.status(403).json({ error: "Invitation required." });
-    if (room.visibility === "private" && !room.owner_id !== req.user.userId &&
+    if (room.visibility === "private" && room.owner_id !== req.user.userId &&
         !db.prepare("SELECT 1 FROM blabber_invites WHERE blabber_id = ? AND user_id = ?").get(id, req.user.userId) &&
         !isMember(id, req.user.userId)) return res.status(403).json({ error: "Invitation required." });
     db.prepare("INSERT OR IGNORE INTO blabber_members (blabber_id, user_id) VALUES (?, ?)").run(id, req.user.userId);
@@ -138,8 +137,12 @@ module.exports = function createBlabbersRouter(db, authenticateToken) {
     const room = roomById(id);
     if (!room || !isMember(id, req.user.userId)) return res.status(404).json({ error: "You are not in this Blabber." });
     if (room.owner_id === req.user.userId) {
-      db.prepare("DELETE FROM blabbers WHERE id = ?").run(id);
-      return res.json({ deleted: true });
+      const nextOwner = db.prepare("SELECT user_id FROM blabber_members WHERE blabber_id = ? AND user_id != ? ORDER BY joined_at ASC LIMIT 1").get(id, req.user.userId);
+      if (nextOwner) db.prepare("UPDATE blabbers SET owner_id = ? WHERE id = ?").run(nextOwner.user_id, id);
+      else {
+        db.prepare("DELETE FROM blabbers WHERE id = ?").run(id);
+        return res.json({ deleted: true });
+      }
     }
     db.prepare("DELETE FROM blabber_members WHERE blabber_id = ? AND user_id = ?").run(id, req.user.userId);
     db.prepare("DELETE FROM blabber_signals WHERE blabber_id = ? AND (from_user_id = ? OR to_user_id = ?)").run(id, req.user.userId, req.user.userId);
