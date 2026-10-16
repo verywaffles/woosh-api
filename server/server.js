@@ -332,7 +332,9 @@ app.get("/api/users/:username", (req, res) => {
           display_name,
           bio,
           profile_picture,
-          created_at
+          created_at,
+          (SELECT COUNT(*) FROM user_follows WHERE following_id = users.id) AS followers_count,
+          (SELECT COUNT(*) FROM user_follows WHERE follower_id = users.id) AS following_count
         FROM users
         WHERE username = ? COLLATE NOCASE
       `)
@@ -370,6 +372,8 @@ app.get("/api/users/:username", (req, res) => {
         bio: user.bio || "",
         profilePicture: user.profile_picture || null,
         createdAt: user.created_at,
+        followersCount: user.followers_count || 0,
+        followingCount: user.following_count || 0,
       },
       wooshes: posts,
     });
@@ -2185,6 +2189,7 @@ app.delete(
 );
 // Messaging privacy, account blocking, and server channels.
 app.use("/api", require("./messaging")(db, authenticateToken));
+app.use("/api", require("./follows")(db, authenticateToken));
 
 // WOOSHIES API ROUTES
 app.use("/api/wooshies", require("./wooshies")(db, authenticateToken));
