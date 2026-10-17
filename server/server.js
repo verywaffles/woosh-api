@@ -726,7 +726,7 @@ app.post(
       }
 
       const woosh = db
-        .prepare("SELECT id FROM wooshes WHERE id = ?")
+        .prepare("SELECT id, user_id FROM wooshes WHERE id = ?")
         .get(wooshId);
 
       if (!woosh) {
@@ -754,6 +754,9 @@ app.post(
           (user_id, woosh_id)
           VALUES (?, ?)
         `).run(req.user.userId, wooshId);
+        if (woosh.user_id !== req.user.userId) {
+          db.prepare("INSERT INTO notifications (recipient_id, actor_id, type, woosh_id) VALUES (?, ?, 'like', ?)").run(woosh.user_id, req.user.userId, wooshId);
+        }
       }
 
       res.json({
@@ -825,6 +828,10 @@ app.post(
           wooshId,
           text
         );
+
+      if (woosh.user_id !== req.user.userId) {
+        db.prepare("INSERT INTO notifications (recipient_id, actor_id, type, woosh_id, comment_id) VALUES (?, ?, 'comment', ?, ?)").run(woosh.user_id, req.user.userId, wooshId, Number(result.lastInsertRowid));
+      }
 
       const comment = db
         .prepare(`
@@ -2190,6 +2197,7 @@ app.delete(
 // Messaging privacy, account blocking, and server channels.
 app.use("/api", require("./messaging")(db, authenticateToken));
 app.use("/api", require("./follows")(db, authenticateToken));
+app.use("/api", require("./notifications")(db, authenticateToken));
 
 // WOOSHIES API ROUTES
 app.use("/api/wooshies", require("./wooshies")(db, authenticateToken));
