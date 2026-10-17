@@ -808,7 +808,7 @@ app.post(
       }
 
       const woosh = db
-        .prepare("SELECT id FROM wooshes WHERE id = ?")
+        .prepare("SELECT id, user_id FROM wooshes WHERE id = ?")
         .get(wooshId);
 
       if (!woosh) {
