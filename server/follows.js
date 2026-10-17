@@ -30,7 +30,10 @@ module.exports = function followRoutes(db, authenticateToken) {
     const target = db.prepare("SELECT id FROM users WHERE username = ? COLLATE NOCASE").get(req.params.username);
     if (!target) return res.status(404).json({ error: "User not found." });
     if (target.id === req.user.userId) return res.status(400).json({ error: "You cannot follow yourself." });
-    db.prepare("INSERT OR IGNORE INTO user_follows (follower_id, following_id) VALUES (?, ?)").run(req.user.userId, target.id);
+    const inserted = db.prepare("INSERT OR IGNORE INTO user_follows (follower_id, following_id) VALUES (?, ?)").run(req.user.userId, target.id);
+    if (inserted.changes) {
+      db.prepare("INSERT INTO notifications (recipient_id, actor_id, type) VALUES (?, ?, 'follow')").run(target.id, req.user.userId);
+    }
     const followersCount = db.prepare("SELECT COUNT(*) AS count FROM user_follows WHERE following_id = ?").get(target.id).count;
     res.json({ isFollowing: true, followersCount });
   });
