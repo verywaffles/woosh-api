@@ -618,6 +618,18 @@ app.get("/api/wooshes", (req, res) => {
   }
 });
 
+
+app.get("/api/wooshes/following", authenticateToken, (req, res) => {
+  try {
+    const rows = db.prepare("SELECT w.id FROM wooshes w INNER JOIN user_follows f ON f.following_id = w.user_id WHERE f.follower_id = ? ORDER BY w.id DESC LIMIT 100").all(req.user.userId);
+    const wooshes = rows.map((row) => getWooshById(row.id)).filter(Boolean);
+    res.json({ wooshes });
+  } catch (error) {
+    console.error("Following feed error:", error);
+    res.status(500).json({ error: "Could not load Following feed." });
+  }
+});
+
 // ============================================================
 // CREATE WOOSH
 // ============================================================
