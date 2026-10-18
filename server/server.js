@@ -2215,6 +2215,9 @@ app.use("/api", require("./notifications")(db, authenticateToken));
 app.use("/api/wooshies", require("./wooshies")(db, authenticateToken));
 app.use("/api/blabbers", require("./blabbers")(db, authenticateToken));
 
+// Explore and Search API routes.
+app.use("/api", require("./explore")(db));
+
 // ============================================================
 // START SERVER
 // ============================================================
