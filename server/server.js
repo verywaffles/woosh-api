@@ -2205,6 +2205,8 @@ app.delete(
 );
 // Messaging privacy, account blocking, and server channels.
 app.use("/api", require("./messaging")(db, authenticateToken));
+// Explore, search, following feed, and notifications.
+app.use("/api", require("./social")(db, authenticateToken));
 
 // WOOSHIES API ROUTES
 app.use("/api/wooshies", require("./wooshies")(db, authenticateToken));
