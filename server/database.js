@@ -10,7 +10,8 @@ db.exec(`
     password_hash TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     bio TEXT DEFAULT '',
-    profile_picture TEXT DEFAULT ''
+    profile_picture TEXT DEFAULT '',
+    profile_banner TEXT DEFAULT ''
   );
 
   CREATE TABLE IF NOT EXISTS wooshes (
@@ -73,6 +74,11 @@ db.exec(`
     FOREIGN KEY (sender_id) REFERENCES users(id)
   );
 `);
+
+const userColumns = db.prepare("PRAGMA table_info(users)").all();
+if (!userColumns.some((column) => column.name === "profile_banner")) {
+  db.exec("ALTER TABLE users ADD COLUMN profile_banner TEXT DEFAULT ''");
+}
 
 const wooshColumns = db.prepare("PRAGMA table_info(wooshes)").all();
 if (!wooshColumns.some((column) => column.name === "rewooshed_from_id")) {
