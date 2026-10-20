@@ -580,11 +580,11 @@ function getWooshById(wooshId) {
   const pollRow = db.prepare("SELECT id, question FROM woosh_polls WHERE woosh_id = ?").get(wooshId);
   let poll = null;
   if (pollRow) {
-    const options = db.prepare(\`
+    const options = db.prepare(`
       SELECT po.id, po.option_text AS text, COUNT(pv.id) AS votes
       FROM poll_options po LEFT JOIN poll_votes pv ON pv.option_id = po.id
       WHERE po.poll_id = ? GROUP BY po.id ORDER BY po.id
-    \`).all(pollRow.id);
+    `).all(pollRow.id);
     poll = { id: pollRow.id, question: pollRow.question, options,
       totalVotes: options.reduce((sum, option) => sum + option.votes, 0) };
   }
