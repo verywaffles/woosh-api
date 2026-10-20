@@ -575,6 +575,18 @@ function getWooshById(wooshId) {
     .all(wooshId)
     .map((row) => row.username);
 
+  const pollRow = db.prepare("SELECT id, question FROM woosh_polls WHERE woosh_id = ?").get(wooshId);
+  let poll = null;
+  if (pollRow) {
+    const options = db.prepare(\`
+      SELECT po.id, po.option_text AS text, COUNT(pv.id) AS votes
+      FROM poll_options po LEFT JOIN poll_votes pv ON pv.option_id = po.id
+      WHERE po.poll_id = ? GROUP BY po.id ORDER BY po.id
+    \`).all(pollRow.id);
+    poll = { id: pollRow.id, question: pollRow.question, options,
+      totalVotes: options.reduce((sum, option) => sum + option.votes, 0) };
+  }
+
   return {
     id: woosh.id,
     userId: woosh.user_id,
@@ -591,6 +603,7 @@ function getWooshById(wooshId) {
     likes,
     comments,
     rewooshes,
+    poll,
   };
 }
 
@@ -640,7 +653,7 @@ app.get("/api/wooshes", (req, res) => {
 
 app.post("/api/wooshes", authenticateToken, (req, res) => {
   try {
-    const { text, image } = req.body;
+    const { text, image, poll: pollInput } = req.body;
 
     const cleanText =
       typeof text === "string" ? text.trim() : "";
@@ -672,9 +685,21 @@ app.post("/api/wooshes", authenticateToken, (req, res) => {
         cleanImage
       );
 
-    const woosh = getWooshById(
-      Number(result.lastInsertRowid)
-    );
+    const wooshId = Number(result.lastInsertRowid);
+    if (pollInput && typeof pollInput === "object") {
+      const question = typeof pollInput.question === "string" ? pollInput.question.trim() : "";
+      const options = Array.isArray(pollInput.options)
+        ? [...new Set(pollInput.options.map((option) => String(option).trim()).filter(Boolean))]
+        : [];
+      if (!question || question.length > 240 || options.length < 2 || options.length > 4 || options.some((option) => option.length > 100)) {
+        db.prepare("DELETE FROM wooshes WHERE id = ?").run(wooshId);
+        return res.status(400).json({ error: "Polls need a question and 2–4 options (max 100 characters each)." });
+      }
+      const pollResult = db.prepare("INSERT INTO woosh_polls (woosh_id, question) VALUES (?, ?)").run(wooshId, question);
+      const insertOption = db.prepare("INSERT INTO poll_options (poll_id, option_text) VALUES (?, ?)");
+      options.forEach((option) => insertOption.run(Number(pollResult.lastInsertRowid), option));
+    }
+    const woosh = getWooshById(wooshId);
 
     res.status(201).json({
       message: "Woosh created.",
@@ -801,6 +826,7 @@ app.post(
         typeof req.body.text === "string"
           ? req.body.text.trim()
           : "";
+      const gifUrl = typeof req.body.gifUrl === "string" ? req.body.gifUrl.trim() : "";
 
       if (!Number.isInteger(wooshId)) {
         return res.status(400).json({
@@ -808,10 +834,11 @@ app.post(
         });
       }
 
-      if (!text) {
-        return res.status(400).json({
-          error: "Comment cannot be empty.",
-        });
+      if (!text && !gifUrl) {
+        return res.status(400).json({ error: "Comment cannot be empty." });
+      }
+      if (gifUrl && (!/^https:\/\/media\d?\.giphy\.com\//i.test(gifUrl) || gifUrl.length > 2000)) {
+        return res.status(400).json({ error: "Please select a valid GIPHY GIF." });
       }
 
       if (text.length > 1000) {
@@ -833,13 +860,14 @@ app.post(
       const result = db
         .prepare(`
           INSERT INTO comments
-          (user_id, woosh_id, text)
-          VALUES (?, ?, ?)
+          (user_id, woosh_id, text, gif_url)
+          VALUES (?, ?, ?, ?)
         `)
         .run(
           req.user.userId,
           wooshId,
-          text
+          text,
+          gifUrl || null
         );
 
       const comment = db
@@ -847,6 +875,7 @@ app.post(
           SELECT
             c.id,
             c.text,
+            c.gif_url,
             c.created_at,
             u.username,
             u.display_name,
@@ -864,6 +893,7 @@ app.post(
           displayName: comment.display_name,
           profilePicture: comment.profile_picture,
           text: comment.text,
+          gifUrl: comment.gif_url || null,
           createdAt: comment.created_at,
         },
       });
@@ -876,6 +906,49 @@ app.post(
     }
   }
 );
+
+// Poll voting: one vote per user per poll.
+app.post("/api/wooshes/:id/poll/vote", authenticateToken, (req, res) => {
+  const wooshId = Number(req.params.id);
+  const optionId = Number(req.body.optionId);
+  const poll = db.prepare("SELECT id FROM woosh_polls WHERE woosh_id = ?").get(wooshId);
+  if (!poll) return res.status(404).json({ error: "Poll not found." });
+  const option = db.prepare("SELECT id FROM poll_options WHERE id = ? AND poll_id = ?").get(optionId, poll.id);
+  if (!option) return res.status(400).json({ error: "Choose an option from this poll." });
+  try {
+    db.prepare("INSERT INTO poll_votes (poll_id, option_id, user_id) VALUES (?, ?, ?)").run(poll.id, optionId, req.user.userId);
+    return res.json({ woosh: getWooshById(wooshId) });
+  } catch (error) {
+    if (String(error.message).includes("UNIQUE")) return res.status(409).json({ error: "You already voted in this poll." });
+    console.error("Poll vote error:", error);
+    return res.status(500).json({ error: "Could not save your vote." });
+  }
+});
+
+app.get("/api/giphy/search", async (req, res) => {
+  const apiKey = process.env.GIPHY_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: "GIF search is not configured yet." });
+  const query = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 80) : "";
+  if (!query) return res.json({ gifs: [] });
+  try {
+    const url = new URL("https://api.giphy.com/v1/gifs/search");
+    url.searchParams.set("api_key", apiKey);
+    url.searchParams.set("q", query);
+    url.searchParams.set("limit", "12");
+    url.searchParams.set("rating", "pg");
+    const response = await fetch(url);
+    if (!response.ok) throw new Error("GIPHY request failed");
+    const payload = await response.json();
+    res.json({ gifs: (payload.data || []).map((gif) => ({
+      id: gif.id, preview: gif.images?.fixed_width_small?.url,
+      url: gif.images?.fixed_height?.url || gif.images?.original?.url,
+      alt: gif.title || "GIF",
+    })).filter((gif) => gif.preview && gif.url) });
+  } catch (error) {
+    console.error("GIPHY search error:", error);
+    res.status(502).json({ error: "Could not search GIPHY right now." });
+  }
+});
 
 // ============================================================
 // REWOOSH
