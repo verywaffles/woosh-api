@@ -122,4 +122,37 @@ db.exec(`
   );
 `);
 
+
+const commentColumns = db.prepare("PRAGMA table_info(comments)").all();
+if (!commentColumns.some((column) => column.name === "gif_url")) {
+  db.exec("ALTER TABLE comments ADD COLUMN gif_url TEXT");
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS woosh_polls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    woosh_id INTEGER NOT NULL UNIQUE,
+    question TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (woosh_id) REFERENCES wooshes(id)
+  );
+  CREATE TABLE IF NOT EXISTS poll_options (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    poll_id INTEGER NOT NULL,
+    option_text TEXT NOT NULL,
+    FOREIGN KEY (poll_id) REFERENCES woosh_polls(id)
+  );
+  CREATE TABLE IF NOT EXISTS poll_votes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    poll_id INTEGER NOT NULL,
+    option_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (poll_id, user_id),
+    FOREIGN KEY (poll_id) REFERENCES woosh_polls(id),
+    FOREIGN KEY (option_id) REFERENCES poll_options(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+`);
+
 module.exports = db;
