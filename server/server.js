@@ -545,6 +545,7 @@ function getWooshById(wooshId) {
       SELECT
         c.id,
         c.text,
+        c.gif_url,
         c.created_at,
         u.username,
         u.display_name,
@@ -561,6 +562,7 @@ function getWooshById(wooshId) {
       displayName: comment.display_name,
       profilePicture: comment.profile_picture,
       text: comment.text,
+      gifUrl: comment.gif_url || null,
       createdAt: comment.created_at,
     }));
 
