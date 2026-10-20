@@ -663,7 +663,7 @@ app.post("/api/wooshes", authenticateToken, (req, res) => {
     const cleanImage =
       typeof image === "string" ? image : null;
 
-    if (!cleanText && !cleanImage) {
+    if (!cleanText && !cleanImage && !pollInput) {
       return res.status(400).json({
         error: "Your Woosh needs some content.",
       });
