@@ -2208,6 +2208,9 @@ app.use("/api", require("./messaging")(db, authenticateToken));
 // Explore, search, following feed, and notifications.
 app.use("/api", require("./social")(db, authenticateToken));
 
+// THE WOOSH editorial API.
+app.use("/api", require("./the-woosh")(db, authenticateToken));
+
 // WOOSHIES API ROUTES
 app.use("/api/wooshies", require("./wooshies")(db, authenticateToken));
 app.use("/api/blabbers", require("./blabbers")(db, authenticateToken));
