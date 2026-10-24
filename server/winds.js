@@ -70,10 +70,11 @@ module.exports = function createProfileStatusesRouter(db, authenticateToken) {
 
   const cleanupExpiredStatuses = () => {
     try {
-      const expired = db.prepare("SELECT id, video_url FROM winds WHERE expires_at <= datetime('now')").all();
+      const expired = db.prepare("SELECT id, video_url FROM winds WHERE expires_at <= datetime('now') OR user_id NOT IN (SELECT id FROM users)").all();
       const removeExpired = db.transaction(() => {
-        db.prepare("DELETE FROM winds WHERE expires_at <= datetime('now')").run();
-        db.prepare("DELETE FROM drops WHERE expires_at <= datetime('now')").run();
+        db.prepare("DELETE FROM winds WHERE expires_at <= datetime('now') OR user_id NOT IN (SELECT id FROM users)").run();
+        db.prepare("DELETE FROM drops WHERE expires_at <= datetime('now') OR user_id NOT IN (SELECT id FROM users)").run();
+        db.prepare("DELETE FROM pinned_wooshes WHERE user_id NOT IN (SELECT id FROM users) OR woosh_id NOT IN (SELECT id FROM wooshes)").run();
       });
       removeExpired();
       expired.forEach((wind) => removeWindFile(wind.video_url));
@@ -166,7 +167,7 @@ module.exports = function createProfileStatusesRouter(db, authenticateToken) {
       let outputPath = "";
       try {
         const duration = await probeDuration(req.file.path);
-        if (duration <= 0 || duration > 7.05) {
+        if (duration <= 0 || duration > 7) {
           fs.unlink(req.file.path, () => {});
           return res.status(400).json({ error: "Winds must be 7 seconds or shorter." });
         }
@@ -225,6 +226,7 @@ module.exports = function createProfileStatusesRouter(db, authenticateToken) {
   router.get("/users/:username/pinned-wooshes", (req, res) => {
     const user = db.prepare("SELECT id FROM users WHERE username = ? COLLATE NOCASE").get(req.params.username);
     if (!user) return res.status(404).json({ error: "User not found." });
+    db.prepare("DELETE FROM pinned_wooshes WHERE user_id NOT IN (SELECT id FROM users) OR woosh_id NOT IN (SELECT id FROM wooshes)").run();
     const wooshes = db.prepare(`
       SELECT w.id, w.user_id, w.text, w.image, w.created_at, u.username, u.display_name, u.profile_picture, p.position
       FROM pinned_wooshes p
@@ -245,6 +247,7 @@ module.exports = function createProfileStatusesRouter(db, authenticateToken) {
     if (db.prepare("SELECT 1 FROM pinned_wooshes WHERE user_id = ? AND woosh_id = ?").get(req.user.userId, wooshId)) {
       return res.json({ message: "Woosh is already pinned." });
     }
+    db.prepare("DELETE FROM pinned_wooshes WHERE user_id NOT IN (SELECT id FROM users) OR woosh_id NOT IN (SELECT id FROM wooshes)").run();
     const count = db.prepare("SELECT COUNT(*) AS count FROM pinned_wooshes WHERE user_id = ?").get(req.user.userId).count;
     if (count >= 3) return res.status(400).json({ error: "You can pin up to 3 Wooshes." });
     db.prepare("INSERT INTO pinned_wooshes (user_id, woosh_id, position) VALUES (?, ?, ?)").run(req.user.userId, wooshId, count);
