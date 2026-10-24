@@ -1,5 +1,6 @@
 const express = require("express");
 const path = require("path");
+const fs = require("fs");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -2281,6 +2282,15 @@ app.delete("/api/admin/wooshies/:id", authenticateToken, requireOwner, (req, res
     db.prepare("DELETE FROM wooshies WHERE id = ?").run(id);
   });
   remove();
+  const prefix = "/uploads/wooshies/";
+  if (typeof wooshie.video_url === "string" && wooshie.video_url.startsWith(prefix)) {
+    const filename = path.basename(wooshie.video_url);
+    if (filename === wooshie.video_url.slice(prefix.length)) {
+      fs.unlink(path.join(__dirname, "uploads", "wooshies", filename), (error) => {
+        if (error && error.code !== "ENOENT") console.error("Could not remove owner-deleted Wooshie video:", error);
+      });
+    }
+  }
   return res.json({ message: "Wooshie deleted by owner.", id });
 });
 
