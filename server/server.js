@@ -2226,6 +2226,9 @@ app.use("/api", require("./social")(db, authenticateToken));
 // THE WOOSH editorial API.
 app.use("/api", require("./the-woosh")(db, authenticateToken));
 
+// Temporary profile Winds, Drops, and pinned Wooshes.
+app.use("/api", require("./winds")(db, authenticateToken));
+
 // WOOSHIES API ROUTES
 app.use("/api/wooshies", require("./wooshies")(db, authenticateToken));
 app.use("/api/blabbers", require("./blabbers")(db, authenticateToken));
