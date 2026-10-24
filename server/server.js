@@ -2315,8 +2315,11 @@ app.delete("/api/admin/users/:id", authenticateToken, requireOwner, (req, res) =
     }
     try { db.prepare("DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE user1_id = ? OR user2_id = ?)").run(id,id); } catch {}
     try { db.prepare("DELETE FROM conversations WHERE user1_id = ? OR user2_id = ?").run(id,id); } catch {}
+    try { db.prepare("DELETE FROM group_messages WHERE group_id IN (SELECT id FROM group_conversations WHERE created_by = ?)").run(id); } catch {}
+    try { db.prepare("DELETE FROM group_conversation_members WHERE group_id IN (SELECT id FROM group_conversations WHERE created_by = ?)").run(id); } catch {}
     try { db.prepare("DELETE FROM group_conversation_members WHERE user_id = ?").run(id); } catch {}
     try { db.prepare("DELETE FROM group_conversations WHERE created_by = ?").run(id); } catch {}
+    try { db.prepare("DELETE FROM dm_nicknames WHERE other_user_id = ?").run(id); } catch {}
     for (const table of ["follows","blocks","user_blocks","notifications","poll_votes","polls"]) {
       for (const column of ["user_id","follower_id","following_id","blocker_id","blocked_id","recipient_id","author_id","created_by"]) {
         try { db.prepare(`DELETE FROM ${table} WHERE ${column} = ?`).run(id); } catch {}
