@@ -107,7 +107,6 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (wooshie_id) REFERENCES wooshies(id)
   );
-);
 
 
 db.exec(`
