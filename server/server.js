@@ -1,5 +1,6 @@
 const express = require("express");
 const path = require("path");
+const fs = require("fs");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -81,6 +82,14 @@ function authenticateToken(req, res, next) {
       error: "Invalid or expired token.",
     });
   }
+}
+
+function requireOwner(req, res, next) {
+  const ownerUsername = (process.env.WOOSH_OWNER_USERNAME || "waff").toLowerCase();
+  if (!req.user || req.user.username.toLowerCase() !== ownerUsername) {
+    return res.status(403).json({ error: "Owner access required." });
+  }
+  next();
 }
 
 // ============================================================
@@ -361,6 +370,7 @@ app.get("/api/users/:username", (req, res) => {
         profilePicture: user.profile_picture || null,
         profileBanner: user.profile_banner || null,
         createdAt: user.created_at,
+        isOwner: user.username.toLowerCase() === (process.env.WOOSH_OWNER_USERNAME || "waff").toLowerCase(),
       },
       wooshes: posts,
     });
@@ -1012,7 +1022,9 @@ app.get(
             CASE
               WHEN c.user1_id = ? THEN u2.profile_picture
               ELSE u1.profile_picture
-            END AS other_profile_picture
+            END AS other_profile_picture,
+            (SELECT nickname FROM dm_nicknames n
+             WHERE n.conversation_id = c.id AND n.user_id = ?) AS nickname
 
           FROM conversations c
           JOIN users u1 ON u1.id = c.user1_id
@@ -1024,6 +1036,7 @@ app.get(
           ORDER BY c.id DESC
         `)
         .all(
+          req.user.userId,
           req.user.userId,
           req.user.userId,
           req.user.userId,
@@ -1059,6 +1072,7 @@ app.get(
               conversation.other_display_name,
             profilePicture:
               conversation.other_profile_picture || null,
+            nickname: conversation.nickname || "",
           },
           lastMessage: lastMessage
             ? {
@@ -1171,6 +1185,7 @@ app.post(
             displayName: otherUser.display_name,
             profilePicture:
               otherUser.profile_picture || null,
+            nickname: db.prepare("SELECT nickname FROM dm_nicknames WHERE conversation_id = ? AND user_id = ?").get(conversation.id, req.user.userId)?.nickname || "",
           },
         },
       });
@@ -2214,6 +2229,117 @@ app.use("/api", require("./the-woosh")(db, authenticateToken));
 // WOOSHIES API ROUTES
 app.use("/api/wooshies", require("./wooshies")(db, authenticateToken));
 app.use("/api/blabbers", require("./blabbers")(db, authenticateToken));
+
+
+app.patch("/api/dms/:conversationId/nickname", authenticateToken, (req, res) => {
+  try {
+    const conversationId = Number(req.params.conversationId);
+    const nickname = typeof req.body.nickname === "string" ? req.body.nickname.trim() : "";
+    if (!Number.isInteger(conversationId) || conversationId < 1) return res.status(400).json({ error: "Invalid conversation ID." });
+    if (nickname.length > 40) return res.status(400).json({ error: "Nicknames must be 40 characters or fewer." });
+    const conversation = db.prepare("SELECT id, user1_id, user2_id FROM conversations WHERE id = ? AND (user1_id = ? OR user2_id = ?)").get(conversationId, req.user.userId, req.user.userId);
+    if (!conversation) return res.status(404).json({ error: "Conversation not found." });
+    const otherUserId = conversation.user1_id === req.user.userId ? conversation.user2_id : conversation.user1_id;
+    if (!nickname) {
+      db.prepare("DELETE FROM dm_nicknames WHERE conversation_id = ? AND user_id = ?").run(conversationId, req.user.userId);
+    } else {
+      db.prepare(`INSERT INTO dm_nicknames (conversation_id, user_id, other_user_id, nickname)
+        VALUES (?, ?, ?, ?) ON CONFLICT(conversation_id, user_id)
+        DO UPDATE SET nickname = excluded.nickname, other_user_id = excluded.other_user_id, updated_at = CURRENT_TIMESTAMP`)
+        .run(conversationId, req.user.userId, otherUserId, nickname);
+    }
+    return res.json({ nickname });
+  } catch (error) {
+    console.error("DM nickname error:", error);
+    return res.status(500).json({ error: "Could not save DM nickname." });
+  }
+});
+
+app.delete("/api/admin/wooshes/:id", authenticateToken, requireOwner, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: "Invalid Woosh ID." });
+  const woosh = db.prepare("SELECT id FROM wooshes WHERE id = ?").get(id);
+  if (!woosh) return res.status(404).json({ error: "Woosh not found." });
+  const remove = db.transaction(() => {
+    db.prepare("DELETE FROM comments WHERE woosh_id = ?").run(id);
+    db.prepare("DELETE FROM likes WHERE woosh_id = ?").run(id);
+    db.prepare("DELETE FROM rewooshes WHERE woosh_id = ?").run(id);
+    db.prepare("DELETE FROM wooshes WHERE id = ?").run(id);
+  });
+  remove();
+  return res.json({ message: "Woosh deleted by owner.", id });
+});
+
+app.delete("/api/admin/wooshies/:id", authenticateToken, requireOwner, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: "Invalid Wooshie ID." });
+  const wooshie = db.prepare("SELECT id, video_url FROM wooshies WHERE id = ?").get(id);
+  if (!wooshie) return res.status(404).json({ error: "Wooshie not found." });
+  const remove = db.transaction(() => {
+    for (const table of ["wooshie_comments", "wooshie_likes", "wooshie_views"]) {
+      try { db.prepare(`DELETE FROM ${table} WHERE wooshie_id = ?`).run(id); } catch {}
+    }
+    db.prepare("DELETE FROM wooshies WHERE id = ?").run(id);
+  });
+  remove();
+  const prefix = "/uploads/wooshies/";
+  if (typeof wooshie.video_url === "string" && wooshie.video_url.startsWith(prefix)) {
+    const filename = path.basename(wooshie.video_url);
+    if (filename === wooshie.video_url.slice(prefix.length)) {
+      fs.unlink(path.join(__dirname, "uploads", "wooshies", filename), (error) => {
+        if (error && error.code !== "ENOENT") console.error("Could not remove owner-deleted Wooshie video:", error);
+      });
+    }
+  }
+  return res.json({ message: "Wooshie deleted by owner.", id });
+});
+
+app.delete("/api/admin/users/:id", authenticateToken, requireOwner, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: "Invalid user ID." });
+  if (id === req.user.userId) return res.status(400).json({ error: "You cannot delete your own Owner account here." });
+  const target = db.prepare("SELECT id, username FROM users WHERE id = ?").get(id);
+  if (!target) return res.status(404).json({ error: "Account not found." });
+  const ownerUsername = (process.env.WOOSH_OWNER_USERNAME || "waff").toLowerCase();
+  if (target.username.toLowerCase() === ownerUsername) return res.status(403).json({ error: "The Owner account is protected." });
+  const remove = db.transaction(() => {
+    const ownedWooshies = db.prepare("SELECT id FROM wooshies WHERE user_id = ?").all(id);
+    for (const item of ownedWooshies) {
+      for (const table of ["wooshie_comments", "wooshie_likes", "wooshie_views"]) {
+        try { db.prepare(`DELETE FROM ${table} WHERE wooshie_id = ?`).run(item.id); } catch {}
+      }
+    }
+    db.prepare("DELETE FROM wooshies WHERE user_id = ?").run(id);
+    const ownedWooshes = db.prepare("SELECT id FROM wooshes WHERE user_id = ?").all(id);
+    for (const item of ownedWooshes) {
+      db.prepare("DELETE FROM comments WHERE woosh_id = ?").run(item.id);
+      db.prepare("DELETE FROM likes WHERE woosh_id = ?").run(item.id);
+      db.prepare("DELETE FROM rewooshes WHERE woosh_id = ?").run(item.id);
+    }
+    db.prepare("DELETE FROM wooshes WHERE user_id = ?").run(id);
+    for (const table of ["wooshie_comments","wooshie_likes","wooshie_views","comments","likes","rewooshes","dm_nicknames"]) {
+      try { db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(id); } catch {}
+    }
+    for (const table of ["messages","group_messages"]) {
+      try { db.prepare(`DELETE FROM ${table} WHERE sender_id = ?`).run(id); } catch {}
+    }
+    try { db.prepare("DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE user1_id = ? OR user2_id = ?)").run(id,id); } catch {}
+    try { db.prepare("DELETE FROM conversations WHERE user1_id = ? OR user2_id = ?").run(id,id); } catch {}
+    try { db.prepare("DELETE FROM group_messages WHERE group_id IN (SELECT id FROM group_conversations WHERE created_by = ?)").run(id); } catch {}
+    try { db.prepare("DELETE FROM group_conversation_members WHERE group_id IN (SELECT id FROM group_conversations WHERE created_by = ?)").run(id); } catch {}
+    try { db.prepare("DELETE FROM group_conversation_members WHERE user_id = ?").run(id); } catch {}
+    try { db.prepare("DELETE FROM group_conversations WHERE created_by = ?").run(id); } catch {}
+    try { db.prepare("DELETE FROM dm_nicknames WHERE other_user_id = ?").run(id); } catch {}
+    for (const table of ["follows","blocks","user_blocks","notifications","poll_votes","polls"]) {
+      for (const column of ["user_id","follower_id","following_id","blocker_id","blocked_id","recipient_id","author_id","created_by"]) {
+        try { db.prepare(`DELETE FROM ${table} WHERE ${column} = ?`).run(id); } catch {}
+      }
+    }
+    db.prepare("DELETE FROM users WHERE id = ?").run(id);
+  });
+  try { remove(); return res.json({ message: "Account deleted.", id, username: target.username }); }
+  catch (error) { console.error("Owner account deletion error:", error); return res.status(500).json({ error: "Could not safely delete account." }); }
+});
 
 // ============================================================
 // START SERVER

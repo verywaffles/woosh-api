@@ -142,7 +142,7 @@ module.exports = function createWooshiesRouter(db, authenticateToken) {
     try {
       const wooshie = db.prepare("SELECT id, user_id, video_url FROM wooshies WHERE id = ?").get(id);
       if (!wooshie) return res.status(404).json({ error: "Wooshie not found." });
-      if (wooshie.user_id !== req.user.userId) return res.status(403).json({ error: "You can only delete your own Wooshies." });
+      if (wooshie.user_id !== req.user.userId && req.user.username.toLowerCase() !== (process.env.WOOSH_OWNER_USERNAME || "verywaffles").toLowerCase()) return res.status(403).json({ error: "You can only delete your own Wooshies." });
       db.transaction(() => {
         db.prepare("DELETE FROM wooshie_comments WHERE wooshie_id = ?").run(id);
         db.prepare("DELETE FROM wooshie_likes WHERE wooshie_id = ?").run(id);

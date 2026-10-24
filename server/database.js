@@ -107,8 +107,7 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (wooshie_id) REFERENCES wooshies(id)
   );
-);
-
+`);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS wooshie_comments (
@@ -119,6 +118,20 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (wooshie_id) REFERENCES wooshies(id)
+  );
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS dm_nicknames (
+    conversation_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    other_user_id INTEGER NOT NULL,
+    nickname TEXT NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (conversation_id, user_id),
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (other_user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 `);
 
