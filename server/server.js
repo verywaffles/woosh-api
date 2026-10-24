@@ -85,7 +85,7 @@ function authenticateToken(req, res, next) {
 }
 
 function requireOwner(req, res, next) {
-  const ownerUsername = (process.env.WOOSH_OWNER_USERNAME || "verywaffles").toLowerCase();
+  const ownerUsername = (process.env.WOOSH_OWNER_USERNAME || "waff").toLowerCase();
   if (!req.user || req.user.username.toLowerCase() !== ownerUsername) {
     return res.status(403).json({ error: "Owner access required." });
   }
@@ -370,7 +370,7 @@ app.get("/api/users/:username", (req, res) => {
         profilePicture: user.profile_picture || null,
         profileBanner: user.profile_banner || null,
         createdAt: user.created_at,
-        isOwner: user.username.toLowerCase() === (process.env.WOOSH_OWNER_USERNAME || "verywaffles").toLowerCase(),
+        isOwner: user.username.toLowerCase() === (process.env.WOOSH_OWNER_USERNAME || "waff").toLowerCase(),
       },
       wooshes: posts,
     });
@@ -2300,7 +2300,7 @@ app.delete("/api/admin/users/:id", authenticateToken, requireOwner, (req, res) =
   if (id === req.user.userId) return res.status(400).json({ error: "You cannot delete your own Owner account here." });
   const target = db.prepare("SELECT id, username FROM users WHERE id = ?").get(id);
   if (!target) return res.status(404).json({ error: "Account not found." });
-  const ownerUsername = (process.env.WOOSH_OWNER_USERNAME || "verywaffles").toLowerCase();
+  const ownerUsername = (process.env.WOOSH_OWNER_USERNAME || "waff").toLowerCase();
   if (target.username.toLowerCase() === ownerUsername) return res.status(403).json({ error: "The Owner account is protected." });
   const remove = db.transaction(() => {
     const ownedWooshies = db.prepare("SELECT id FROM wooshies WHERE user_id = ?").all(id);
